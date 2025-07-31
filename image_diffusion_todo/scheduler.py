@@ -84,9 +84,30 @@ class DDPMScheduler(BaseScheduler):
         """
 
         ######## TODO ########
-        # DO NOT change the code outside this part.
-        # Assignment 1. Implement the DDPM reverse step.
-        sample_prev = None
+        
+        # convert int t to shape [B] tensor
+        B = x_t.shape[0]
+        t_batch = torch.full((B,), t, dtype=torch.long, device=x_t.device)
+
+        # extract scalars for each sample
+        alpha_t = self._get_teeth(self.alphas, t_batch)
+        alpha_bar_t = self._get_teeth(self.alphas_cumprod, t_batch)
+        sigma_t = self._get_teeth(self.sigmas, t_batch)
+
+        # compute mean (μ_θ)
+        mean = (1.0 / alpha_t.sqrt()) * (
+            x_t - ((1 - alpha_t) / (1 - alpha_bar_t).sqrt()) * eps_theta
+        )
+
+        # add noise for t > 0
+        noise = torch.randn_like(x_t)
+        nonzero_mask = (t != 0)
+        if nonzero_mask:
+            sample_prev = mean + sigma_t * noise
+        else:
+            sample_prev = mean
+        
+            
         #######################
         
         return sample_prev
@@ -115,12 +136,17 @@ class DDPMScheduler(BaseScheduler):
         """
         
         if eps is None:
-            eps       = torch.randn(x_0.shape, device='cuda')
+            eps = torch.randn(x_0.shape, device='cuda')
 
         ######## TODO ########
-        # DO NOT change the code outside this part.
-        # Assignment 1. Implement the DDPM forward step.
-        x_t = None
-        #######################
+        
+        # get √ᾱ_t and √(1 - ᾱ_t) for each t
+        sqrt_alpha_cumprod_t = self._get_teeth(self.alphas_cumprod.sqrt(), t)
+        sqrt_one_minus_alpha_cumprod_t = self._get_teeth((1.0 - self.alphas_cumprod).sqrt(), t)
 
+        # closed-form formula for q(x_t | x_0)
+        x_t = sqrt_alpha_cumprod_t * x_0 + sqrt_one_minus_alpha_cumprod_t * eps
+        
+        #######################
+        
         return x_t, eps

@@ -15,11 +15,22 @@ class DiffusionModule(nn.Module):
 
     def get_loss(self, x0, class_label=None, noise=None):
         ######## TODO ########
-        # DO NOT change the code outside this part.
-        # compute noise matching loss.
+
+        ## noise matching loss ##
         B = x0.shape[0]
-        timestep = self.var_scheduler.uniform_sample_t(B, self.device)        
-        loss = x0.mean()
+        # sample random timestep t ~ Uniform(0, T)
+        timestep = self.var_scheduler.uniform_sample_t(B, self.device) 
+          
+        # sample ε ~ N(0, I)
+        if noise is None:
+            noise = torch.randn_like(x0)
+        # x_t = √ᾱ_t x_0 + √(1 - ᾱ_t) ε
+        x_t, eps_used = self.var_scheduler.add_noise(x_0=x0, t=timestep, eps=noise)
+        # predict noise ε_θ(x_t, t)
+        pred_noise = self.network(x_t, timestep)
+
+        # compute L2 loss (MSE) between true noise and predicted noise
+        loss = F.mse_loss(pred_noise, eps_used)  
         ######################
         return loss
     
