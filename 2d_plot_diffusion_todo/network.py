@@ -82,7 +82,16 @@ class SimpleNet(nn.Module):
         """
 
         ######## TODO ########
-        # DO NOT change the code outside this part.
+        
+        # layer dimensions: [dim_in, ... , dim_out]
+        dims = [dim_in] + dim_hids + [dim_out]
+        
+        # create TimeLinear layers for each layer pair - learn time-dependent behavior of noise across the diffusion process
+        self.layers = nn.ModuleList()
+        for i in range(len(dims) - 1):
+            self.layers.append(TimeLinear(dims[i], dims[i + 1], num_timesteps))
+        
+        self.activation = nn.ReLU()
 
         ######################
         
@@ -96,7 +105,13 @@ class SimpleNet(nn.Module):
             t: the time that the forward diffusion has been running
         """
         ######## TODO ########
-        # DO NOT change the code outside this part.
-
+        
+        for i, layer in enumerate(self.layers):
+            x = layer(x, t)
+            # apply ReLU to all layers except the last (output: raw noise vector)
+            if i < len(self.layers) - 1:
+                x = self.activation(x)
+        
         ######################
         return x
+
