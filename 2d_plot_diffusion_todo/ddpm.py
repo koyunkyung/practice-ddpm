@@ -84,10 +84,11 @@ class DiffusionModule(nn.Module):
             noise = torch.randn_like(x0)
 
         ######## TODO ########
-        # DO NOT change the code outside this part.
-        # Compute xt.
+        
+        ## forward process (encoding) ##
         alphas_prod_t = extract(self.var_scheduler.alphas_cumprod, t, x0)
-        xt = x0
+        # sample x_t from q(x_t | x_0) = N(√(ᾱ_t) x_0, (1 - ᾱ_t) I)
+        xt = alphas_prod_t.sqrt() * x0 + (1.0 - alphas_prod_t).sqrt() * noise
 
         #######################
 
@@ -106,16 +107,33 @@ class DiffusionModule(nn.Module):
 
         """
         ######## TODO ########
-        # DO NOT change the code outside this part.
-        # compute x_t_prev.
+        
+        ## reverse process (decoding) ##
         if isinstance(t, int):
             t = torch.tensor([t]).to(self.device)
+            
         eps_factor = (1 - extract(self.var_scheduler.alphas, t, xt)) / (
             1 - extract(self.var_scheduler.alphas_cumprod, t, xt)
         ).sqrt()
+        # predict noise from current sample using ε_θ(x_t, t)
         eps_theta = self.network(xt, t)
+        
+        # get necessary coefficients from the scheduler
+        beta_t = extract(self.var_scheduler.betas, t, xt)  
+        alpha_t = extract(self.var_scheduler.alphas, t, xt) 
+        alpha_bar_t = extract(self.var_scheduler.alphas_cumprod, t, xt)
+        
+        # compute mean μ_θ(x_t, t) using parameterization
+        mean = (1.0 / alpha_t.sqrt()) * (
+            xt - (1 - alpha_t) / (1 - alpha_bar_t).sqrt() * eps_theta
+        )
+        
+        # Sample z ~ N(0, I), except for t=0 (final step)
+        noise = torch.randn_like(xt)
+        nonzero_mask = (t != 0).float().view(-1, *([1] * (len(xt.shape) - 1)))  # Masking for t=0
 
-        x_t_prev = xt
+        # Set variance to β_t (fixed variance case, as per DDPM)
+        x_t_prev = mean + nonzero_mask * beta_t.sqrt() * noise
 
         #######################
         return x_t_prev
@@ -131,9 +149,15 @@ class DiffusionModule(nn.Module):
             x0_pred (`torch.Tensor`): The final denoised output through the DDPM reverse process.
         """
         ######## TODO ########
-        # DO NOT change the code outside this part.
-        # sample x0 based on Algorithm 2 of DDPM paper.
-        x0_pred = torch.zeros(shape).to(self.device)
+        
+        # start from x_T ~ N(0, I)
+        x_t = torch.randn(shape).to(self.device)
+        
+        for t in reversed(range(self.var_scheduler.num_train_timesteps)):
+            t_batch = torch.full((shape[0],), t, device=self.device, dtype=torch.long)
+            x_t = self.p_sample(x_t, t_batch)  # one reverse step
+
+        x0_pred = x_t  # final denoised output
 
         ######################
         return x0_pred
@@ -212,16 +236,23 @@ class DiffusionModule(nn.Module):
             loss: the computed loss to be backpropagated.
         """
         ######## TODO ########
-        # DO NOT change the code outside this part.
-        # compute noise matching loss.
+        
         batch_size = x0.shape[0]
+        # random timestep for each sample
         t = (
             torch.randint(0, self.var_scheduler.num_train_timesteps, size=(batch_size,))
             .to(x0.device)
             .long()
         )
+        # sample noise ε ~ N(0, I)
+        noise = torch.randn_like(x0)
+        # generate noisy input x_t
+        x_t = self.q_sample(x0, t, noise)
+        # predict noise using network
+        predicted_noise = self.network(x_t, t)
 
-        loss = x0.mean()
+        # compute L2 loss between true noise and predicted noise
+        loss = F.mse_loss(predicted_noise, noise)
 
         ######################
         return loss
